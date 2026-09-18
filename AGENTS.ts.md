@@ -798,20 +798,69 @@ if (!directory) {
 return new DirectoryStore(directory);
 ~~~
 
-## 32. Zod object schemas are one field per line
+## 32. Object literals put each field on its own line
 
-Every zod object schema literal — `z.object({ ... })`, `z.looseObject({ ... })`, `z.strictObject({ ... })`, and the
-shape literal passed to `.extend({ ... })` — puts each field on its own line, with the closing brace on a line of
-its own. Fields packed onto one line are hard to scan and produce noisy diffs when a field is added or changed.
+Every object literal that constructs a value with two or more named fields puts each field on its own line, with the
+closing brace on a line of its own. This covers plain object literals, constructor and function argument records, test
+expectations, and zod object schema shapes (`z.object({ ... })`, `z.looseObject({ ... })`, `z.strictObject({ ... })`,
+and the shape literal passed to `.extend({ ... })`) alike — a zod schema is just an object literal that describes
+fields. Fields packed onto one line are hard to scan, and a multi-field literal wrapped mid-list at an arbitrary
+column is harder still; both produce noisy diffs when a field is added or changed.
+
+A literal with a single short field, such as `{recursive: true}`, may stay on one line.
 
 ~~~typescript
 // Not this:
-const options = z.object({ kind: z.enum(["release", "snapshot"]).default("release"), githubRepo: z.string().url().optional() });
+const result: UploadTransaction = new UploadTransaction({ ...draft, schema: "mobula.v1.upload-transaction", id: randomUUID(),
+    owner, actor, status: "open", files: [], createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 86400000).toISOString() });
 
 // This:
-const options = z.object({
-    kind: z.enum(["release", "snapshot"]).default("release"),
-    githubCommit: z.string().regex(/^[a-fA-F0-9]{7,40}$/).optional(),
-    githubRepo: z.string().url().optional()
+const result: UploadTransaction = new UploadTransaction({
+    ...draft,
+    schema: "mobula.v1.upload-transaction",
+    id: randomUUID(),
+    owner,
+    actor,
+    status: "open",
+    files: [],
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 86400000).toISOString(),
 });
+~~~
+
+## 33. No constructor parameter properties
+
+Never declare instance fields through TypeScript constructor parameter properties, such as
+`constructor(readonly groupId: string)` or `constructor(private readonly client: Client)`. The shorthand hides the
+object's state inside a function signature: a reader must parse the parameter list to learn what the class holds, and
+the fields never appear in the class body where the layout rule (rule 13) says instance members live.
+
+Declare each instance field explicitly in the class body, with its own comment, and assign it in the constructor body
+in parameter order (rule 25). The constructor parameters then keep no access modifier and exist only to receive values.
+
+~~~typescript
+// Not this:
+export class MavenCoordinates {
+
+    // -----------------------------------------------------------------------------------------------------------------
+    constructor(readonly groupId: string, readonly artifactId: string, readonly version: string) {}
+}
+
+// This:
+export class MavenCoordinates {
+
+    // Maven group name, such as com.example.
+    readonly groupId: string;
+    // Maven artifact name within its group.
+    readonly artifactId: string;
+    // package version named by the caller or saved record.
+    readonly version: string;
+
+    // -----------------------------------------------------------------------------------------------------------------
+    constructor(groupId: string, artifactId: string, version: string) {
+        this.groupId = groupId;
+        this.artifactId = artifactId;
+        this.version = version;
+    }
+}
 ~~~

@@ -4,7 +4,7 @@ Binding conventions for TypeScript codebases. Follow them for all new code. This
 
 ## 1. Declaration "hats"
 
-Every top-level declaration — class, `type`, `interface`, and standalone/module-level `function` — is preceded by a full-width, 120-character comment line using `=`. A method or constructor nested inside a class body gets the lighter `-` hat instead, marking it as a member rather than a top-level declaration.
+Every top-level declaration — class, `type`, `interface`, standalone/module-level `function`, and exported constant that defines a data shape or a mapping (a zod schema, an ORM entity schema) — is preceded by a full-width, 120-character comment line using `=`. A method or constructor nested inside a class body gets the lighter `-` hat instead, marking it as a member rather than a top-level declaration.
 
 Hat lines are exactly 120 characters total, including any leading indentation — shorten the fill-character count to compensate at deeper nesting levels rather than letting the line run past 120.
 
@@ -47,7 +47,7 @@ function safeJoin(root: string, relativePath: string): string | null {
 }
 ```
 
-A function nested inside another function's body is exempt, and so is a one-line stub declaration (e.g. an abstract/`Protocol`-style member whose body is just `...`) — same carve-out as the Python function-hat rule. A `type` or `interface` that fits on one line (e.g. `export type MavenEnv = typeof MAVEN_ENVS[number];`) falls under that same one-line exemption and doesn't need a hat; a `type` or `interface` spanning multiple lines does, same as any other top-level declaration.
+A function nested inside another function's body is exempt, and so is a one-line stub declaration (e.g. an abstract/`Protocol`-style member whose body is just `...`) — same carve-out as the Python function-hat rule. A `type` or `interface` that fits on one line (e.g. `export type MavenEnv = typeof MAVEN_ENVS[number];`) falls under that same one-line exemption and doesn't need a hat; a `type` or `interface` spanning multiple lines does, same as any other top-level declaration. A schema constant gets its hat and descriptive comment like a class. An entity schema carries an explicit type annotation (rule 8); a zod schema is exempt, since its type is the long generated one, and the type inferred from it (`export type ThingJsonType = z.infer<typeof ThingJsonSchema>`) follows it directly.
 
 ## 2. No `export default`
 
@@ -181,27 +181,49 @@ else {
 extension: baseFileName === expectedPom ? "pom" : "jar",
 ```
 
-## 7. Prefer namespace imports over named imports
+## 7. Import classes, interfaces and types by name; import functions and variables through their module
 
-Import a module as a namespace (`import * as x from "./y"`) and access its exports through that namespace (`x.someExport`), rather than destructuring named imports (`import { someExport } from "./y"`) and calling it bare. This applies to first-party modules and third-party packages alike.
+A class, an interface or a type is imported by its own name: `import { ReleaseRecord } from "./release-record"`. Its name is
+already specific, and it is written the same way at every use, so the import line says where it comes from and the use
+sites stay short (`ReleaseRecord`, not `releaseRecordModule.ReleaseRecord`). A schema constant (a zod or entity schema,
+named `<Thing>Schema`) is declared like a class and imported the same way: `import { ThingJsonSchema } from "./thing"`.
+Any other function or variable (including a constant) is imported by importing its module as a namespace
+(`import * as x from "./y"`) and reached through that namespace (`x.someExport`), rather than by destructuring it and
+calling it bare. This applies to first-party modules and
+third-party packages alike.
 
 ```typescript
-// Not this:
+// Not this: functions imported by name and called bare.
 import { Router } from "express";
 import { createMavenReleaseRouter } from "./router/api/release-router";
+import { MavenRelease } from "./maven-release";
 ...
 const router = Router();
 router.use("/maven", createMavenReleaseRouter());
 
-// This:
+// This: functions through their module, the class by name.
 import * as express from "express";
 import * as releaseRouter from "./router/api/release-router";
+import { MavenRelease } from "./maven-release";
 ...
 const router = express.Router();
 router.use("/maven", releaseRouter.createMavenReleaseRouter());
+const release: MavenRelease = new MavenRelease(repository);
 ```
 
-Reasoning: the namespace prefix at the call site shows where a name came from without checking the imports, the same motivation as Python Rule 4 ("import modules, not names"). It also sidesteps collisions between similarly-shaped exports from sibling modules — this codebase has many `createMavenXRouter`-style factory functions across separate router files; named imports of several side by side either collide or need ad hoc renaming at the import line, while a namespace import keeps each one's own prefix automatically. Type-only exports work the same way — `import * as t from "./types"` still lets you write `t.MavenEnv` in a type position.
+Reasoning: the namespace prefix at a function's call site shows where it came from without checking the imports, the same
+motivation as Python Rule 4 ("import modules, not names"). It also sidesteps collisions between similarly-shaped functions
+from sibling modules — this codebase has many `createMavenXRouter`-style factories across separate router files; named
+imports of several side by side either collide or need ad hoc renaming at the import line, while a namespace import keeps
+each one's own prefix automatically. Classes, interfaces and types do not need that: their names are specific to the thing
+they describe, and a prefix in every annotation and `new` expression only adds length.
+
+A module that exports both kinds is imported both ways, one line each, when a file needs both:
+`import * as releaseModule from "./release"` for its functions and `import { Release } from "./release"` for its class.
+When two imported classes, interfaces or types share a name, rename one visibly at the import line
+(`import { Release as DeployRelease } from "./release"`); never rely on a default export to rename (rule 2). A class,
+interface or type that is only used in type positions may be imported with `import type { Release } from "./release"`,
+which is erased at compile time (rule 30); a class that is constructed or extended needs the ordinary import.
 
 **Exception: test-framework DSL imports.** `describe`/`it`/`expect`/`beforeEach`/etc. from `vitest` (and similarly-shaped test runners) are named-imported everywhere in the JS ecosystem as a near-universal convention; writing `vitest.describe(...)` fights that convention for no benefit. Leave test-runner imports as named imports.
 
@@ -285,7 +307,9 @@ A domain class — a class that is a primary, named concept in the codebase, suc
 Use the project's kebab-case convention: `StoreClient` lives in `store-client.ts`.
 
 Utility functions and small supporting classes that exist only to support that domain class and are not shared with
-anything else live in the same file as the domain class, not in a separate utilities module.
+anything else live in the same file as the domain class, not in a separate utilities module. This includes the zod
+schema that defines the file format of the class, and the type inferred from it: they sit above the class in its file,
+not in a `<Class>JsonSchema.ts` of their own.
 
 ~~~text
 myapp/client/
@@ -549,7 +573,7 @@ public trackedFiles(): Map<string, FileState> {
     // ...
 }
 
-// This: expose the report and keep its machinery private.
+// This: expose the report.html and keep its machinery private.
 public status(): WorkspaceStatus {
     // ...
 }
@@ -603,14 +627,14 @@ functions that pretend to be methods of an invisible object.
 let repositoriesRoot: string | null = null;
 let metadataStore: MetadataStore | null = null;
 let objectStore: ObjectStore | null = null;
-const repositories: Map<string, Repository> = new Map();
+const repositories: Map<string, PackageRepository> = new Map();
 
 // This: the stateful concept is explicit.
 export class Server {
 
     readonly metadataStore: MetadataStore;
     readonly objectStore: ObjectStore;
-    private readonly repositories: Map<string, Repository>;
+    private readonly repositories: Map<string, PackageRepository>;
 
     // -----------------------------------------------------------------------------------------------------------------
     constructor(config: ServerConfig) {
@@ -862,5 +886,177 @@ export class MavenCoordinates {
         this.artifactId = artifactId;
         this.version = version;
     }
+}
+~~~
+
+## 34. Split compound conditions into named intermediate values
+
+A condition built from more than one logical operation, or one that does not fit on a single line, must not be
+evaluated inline inside an `if`, a ternary, or a `return`. Give each part its own named local constant so every line
+carries one idea and the final condition reads as a sentence. A condition wrapped mid-expression leaves the
+continuation line with no visual cue that it belongs to the line above, so wrapping is itself the signal to split.
+
+Truthiness shortcuts and double negations hide meaning the same way: `.length` used as a boolean says "nonzero"
+where `length > 0` says "has elements", and `!array.some((x) => !f(x))` is `array.every(f)` wearing a disguise.
+Prefer the explicit comparison and the positive form.
+
+~~~typescript
+// Not this:
+const result: string[] | null = segments.length
+&& !segments.some((segment) => !MavenCoordinates.isValidPart(segment))
+    ? segments
+    : null;
+
+// This:
+const hasSegments: boolean = segments.length > 0;
+const everyPartValid: boolean = segments.every((segment) => MavenCoordinates.isValidPart(segment));
+const result: string[] | null = hasSegments && everyPartValid ? segments : null;
+~~~
+
+## 35. A call with a multi-line argument puts every argument on its own line
+
+When a call has more than one argument and any argument is a multi-line object literal (two or more fields) or a
+multi-line array, lay the call out vertically. The callee and its opening parenthesis go on one line, each argument
+goes on its own line indented one level, every argument including the last ends with a comma, and the closing
+parenthesis goes on a line of its own at the callee's indentation. A multi-line argument is indented one more level
+inside its own line.
+
+Hugging the last argument onto the call line (`f(first, second, {`) puts the leading arguments and the opening of the
+object on one line, so the arguments blur into the object's fields and nothing shows where the object ends and the call
+continues. In the vertical layout every line is either an argument or part of exactly one argument.
+
+~~~typescript
+// Not this:
+const request: DeploymentRequest = await createDeploymentRequest(projectRepository, {
+    projectId: "project-mobula-to-local",
+    environmentId: "development",
+    source: "manual",
+});
+
+// This:
+const request: DeploymentRequest = await createDeploymentRequest(
+    projectRepository,
+    {
+        projectId: "project-mobula-to-local",
+        environmentId: "development",
+        source: "manual",
+    },
+);
+~~~
+
+A call whose only argument is the object literal keeps its opening brace on the call line, as in rule 32:
+`new DeploymentRequest({ ... })`. A literal that rule 32 allows on one line stays on one line, as its own argument
+line when the call is laid out vertically. Calls whose arguments are all single-line stay on one line when they fit
+within 120 characters. A callback passed as the last argument keeps its opening on the call line, as in
+`child.once("error", (error) => {`; this rule is about object literal and array arguments.
+
+## 36. Build composed pipelines in named steps, not nested calls
+
+When an expression composes a value out of staged operations — schema combinators, parser stages, builder or
+middleware chains — do not nest one call chain inside another call's argument list. Give each stage its own named
+constant and let the final expression combine names only, so every line carries exactly one stage of the
+composition. A nested expression such as `z.union([z.string(), z.array(z.unknown()).transform(...)])` forces the
+reader to match brackets before they can even tell how many variants the union has; named steps make the stage
+count visible at a glance, and each stage's type annotation states what that stage produces.
+
+When stages build on earlier stages, declare them in dependency order — class static fields initialize top to
+bottom, so a stage may only reference the names declared above it.
+
+~~~typescript
+// Not this: four composition stages crammed into one statement.
+private static readonly textSchema = z.union([z.string(), z.array(z.unknown()).transform((items) => items[0])])
+    .pipe(z.string().transform((value) => value.trim()))
+    .catch("");
+
+// This: one named stage per line; the annotation says what the stage produces.
+private static readonly firstArrayItem: z.ZodType<unknown> = z.array(z.unknown()).transform((items) => items[0]);
+private static readonly textOrFirstItem: z.ZodType<unknown> = z.union([z.string(), MavenPom.firstArrayItem]);
+private static readonly trimmedText: z.ZodType<string> = MavenPom.textOrFirstItem.pipe(z.string().transform((value) => value.trim()));
+private static readonly textSchema: z.ZodType<string> = MavenPom.trimmedText.catch("");
+~~~
+
+A single flat method chain whose steps all operate on the same receiver (`value.trim().toLowerCase()`) is one idea
+and stays on one line; this rule is about composition, where an argument to a call is itself a call chain.
+
+## 37. Interfaces are declared like classes
+
+An `interface` gets everything a class gets. It has the declaration hat (rule 1) with its descriptive comment
+underneath, and one empty line between the opening line and the first member (rule 13). Every method is preceded by the
+lighter `-` member hat at the member's indentation, with a comment under the hat when the name does not say enough, and
+methods are separated by blank lines, as in a class body. Properties are not given hats; as with class fields, each
+gets a short comment line above it, and they come before the methods. The one-line exemption for a `type` or `interface` that fits
+on a single line still applies; an interface with members does not fit on one line.
+
+~~~typescript
+// Not this: no blank line, no member hats.
+export interface ProcessRunRecorder {
+    save(trace: ProcessTrace): Promise<void>;
+    close(): Promise<void>;
+}
+
+// This:
+// =====================================================================================================================
+// where the runner reports a run each time it changes
+export interface ProcessRunRecorder {
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // stores the run as it is now, inserting it the first time and updating it after
+    save(trace: ProcessTrace): Promise<void>;
+
+    // -----------------------------------------------------------------------------------------------------------------
+    close(): Promise<void>;
+}
+~~~
+
+## 38. Every class has a CLASS banner and an INSTANCE banner
+
+A class body is divided into two sections, each opened by a banner: `CLASS` for the static members and `INSTANCE` for
+everything else (rule 13 gives the order inside them: static fields, static methods, then instance fields, the
+constructor and the other instance methods). A banner is three comment lines at member indentation: a full-width `=`
+line, the word in capitals, and another full-width `=` line. Each line is exactly 120 characters including the 4-space
+indent, like the hats in rule 1, but built from `=` so that it reads as a section divider and not as a member hat.
+
+Layout: one empty line after the class's opening line (rule 13), then the `CLASS` banner. The first member of the
+section follows on the next line with no empty line between. After the last member of a section comes one empty line
+and the next banner.
+
+Every class has both banners. A class with no static members still has the `CLASS` banner, followed by one empty line
+and the `INSTANCE` banner, so that all classes read alike. This holds even for a class with no members at all: its
+body is the two banners, which also signal that it is a class and not a stray declaration.
+
+~~~typescript
+export class DaemonConfig {
+
+    // =================================================================================================================
+    // CLASS
+    // =================================================================================================================
+    // -----------------------------------------------------------------------------------------------------------------
+    public static fromEnvironment(environment: NodeJS.ProcessEnv): DaemonConfig {
+        // ...
+    }
+
+    // =================================================================================================================
+    // INSTANCE
+    // =================================================================================================================
+    // address to listen on
+    public readonly host: string;
+
+    // -----------------------------------------------------------------------------------------------------------------
+    constructor(host: string) {
+        this.host = host;
+    }
+}
+
+export class Command {
+
+    // =================================================================================================================
+    // CLASS
+    // =================================================================================================================
+
+    // =================================================================================================================
+    // INSTANCE
+    // =================================================================================================================
+    // program to start
+    public executable: string;
 }
 ~~~

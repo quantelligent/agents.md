@@ -138,6 +138,8 @@ myapp/client/
 
 **Exception: types shared across independently-deployable components go in a dedicated shared module, not duplicated in each.** If a project's server and client are meant to stay independently deployable, they don't import from each other — but the wire-format types they both need to agree on exactly (`DeclaredFile`, `TransactionManifest`, ...) live in a dedicated `protocol.py`/`types.py` module with no dependency on either side, that both sides import. This is not the same as sharing implementation — the shared module holds only the data shapes exchanged between the components, nothing about how either side handles them. Types that happen to look similar but are used by only one side stay put in the file that uses them; moving something to the shared module is warranted only when both sides actually need the same definition.
 
+**File placement is independent of key shape.** Whether a class's primary key is surrogate (an independent concept) or composite with its parent's key (a dependent/weak-entity concept) is a data-model decision; which file it lives in is a readability decision, and neither implies the other. A dependent class that consumers reference directly — one with its own query methods, its own child tables, or meaningful behavior — gets its own file like any other domain class (e.g. a `Sleeve` keyed `(fund_id, mandate_id)` still lives in `sleeve.py`). Only small satellites manipulated exclusively through their parent (policy rows, settings records) stay in the parent's file.
+
 ## 9. Class body layout: four ordered sections
 
 Leave exactly one empty line between the `class Foo:` line and the first member (field or method) of the class.

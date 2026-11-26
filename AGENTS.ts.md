@@ -767,16 +767,36 @@ if (result.summary.login === "1") {
 }
 ~~~
 
-## 29. Feature ownership and separate tests
+## 29. Layers first, features within them, tests beside the source
 
-Place application code with the feature that owns it, following
-`docs/development/project-structure.md`. Shared technical mechanisms belong in
-`src/infrastructure/`; server configuration and dependency wiring belong in `src/app/`.
+Organize application code as a narrow, deep tree: by architectural layer first, then by feature within each layer. A
+layer is a set of code that depends only on the layers beneath it, such as a core that knows no specific feature,
+the features built on that core, and the adapters that expose them (HTTP, a CLI). Within a layer each feature gets its
+own folder, nested as deep as its parts need, rather than spreading one feature across top-level folders by kind
+(`controllers/`, `models/`, `services/`). An adapter for a feature sits in the adapter's layer under the feature's
+name, so the same feature name appears at the same place in every layer that has a part of it.
 
-All tests, test fixtures and test helpers belong under the project-root `tests/` directory.
-Never colocate them with application code in `src/` or deployable assets in `public/`.
-Server tests mirror feature paths under `tests/server/`; browser tests use `tests/browser/`;
-shared test helpers use `tests/support/`; standalone SQL tests use `tests/database/`.
+Imports point only downward: a layer never imports a layer above it, and features in the same layer share code only
+through the layers below. Write these rules down as dependency checks that run with the type checker, so a wrong
+import fails the build instead of waiting for review. When a feature genuinely needs another feature in its layer,
+make it a named exception in those checks rather than a silent one. The program entry point sits at the root of the
+source tree, assembles the layers, and is imported by nothing.
+
+A file tree is a tree, not a graph, so a file that depends on many branches of it, such as the database that registers
+the records of every feature, lives at the lowest common ancestor of those branches, which is the root beside the entry
+point. It is imported only by the code that assembles those branches, and the features it knows about receive what they
+need from it (an entity manager, say) as an argument and never import it. A file does not move into a folder of its own
+or a catch-all folder (`infrastructure/`, `utils/`, `common/`) to make the layers look tidier: the layout shows the layers
+and keeps like concepts together, and a place that groups files only by how technical they are does neither.
+
+Each package has a `tests/` directory next to its `src/`, holding that package's tests, test fixtures and test
+helpers. Never colocate them with application code in `src/` or with deployable assets such as `public/`. Tests mirror
+the paths of the code they test; shared helpers go in `tests/support/` and fixtures in `tests/fixtures/`.
+
+In a workspace with several packages, a test lives in the lowest package that can see everything it uses. A test
+that needs more than its own package keeps the path of the package it tests, under a folder named after that package.
+Fixtures and helpers live in the package that owns what they describe, and other packages import them by package
+name.
 
 ## 30. No inline import types
 
@@ -1059,4 +1079,30 @@ export class Command {
     // program to start
     public executable: string;
 }
+~~~
+
+## 39. Booleans are named as yes/no questions
+
+Every boolean field, property, parameter, local variable, and every function or method that returns a boolean is named
+so that it reads as a yes/no question, starting with a verb that asks one: `is`, `are`, `has`, `have`, `can`, `should`,
+`must`, `does`, `do`, `was`, `will`. A bare adjective or noun (`enabled`, `disabled`, `changed`, `open`, `current`) or
+an imperative (`allowInsecureHttp`, `useCurrentConfig`, `showArrow`) reads as a state or a command, not as something
+that is true or false.
+
+The name follows the question's grammar: `isLocalEnabled`, `hasPassword`, `canDeploy`, `shouldShowArrow`,
+`doesMatch`, `areOriginsRecorded`. When a plain adjective would be confusing, phrase the question out in full
+(`isInsecureHttpAllowed`, not `allowInsecureHttp`; `isTokenNeeded`, not `needsToken`).
+
+The rule covers the names that cross a boundary too, so that one name means one thing everywhere: columns of a table,
+fields of JSON documents and API bodies, keys of config files, form field names, and the properties that a template
+reads.
+
+~~~typescript
+// Not this:
+public readonly localEnabled: boolean;
+public async secretPresent(provider: OidcProviderJson): Promise<boolean> { ... }
+
+// This:
+public readonly isLocalEnabled: boolean;
+public async isSecretPresent(provider: OidcProviderJson): Promise<boolean> { ... }
 ~~~

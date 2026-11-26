@@ -140,59 +140,105 @@ myapp/client/
 
 **File placement is independent of key shape.** Whether a class's primary key is surrogate (an independent concept) or composite with its parent's key (a dependent/weak-entity concept) is a data-model decision; which file it lives in is a readability decision, and neither implies the other. A dependent class that consumers reference directly — one with its own query methods, its own child tables, or meaningful behavior — gets its own file like any other domain class (e.g. a `Sleeve` keyed `(fund_id, mandate_id)` still lives in `sleeve.py`). Only small satellites manipulated exclusively through their parent (policy rows, settings records) stay in the parent's file.
 
-## 9. Class body layout: four ordered sections
+## 9. Class body layout: CLASS and INSTANCE halves, six ordered sections
 
-Leave exactly one empty line between the `class Foo:` line and the first member (field or method) of the class.
+Leave exactly one empty line between the `class Foo:` line (or its docstring) and the first line of the body.
 
-Within the class body, members fall into four sections, always in this order:
-1. Class-level fields (attributes declared directly in the class body, not inside `__init__`), then `@staticmethod`/`@classmethod` methods
-2. `__init__` (the constructor)
-3. Public instance methods
-4. Private (`_`-prefixed) instance methods
-
-Every static/class-level method goes in section 1 regardless of whether its name is public or `_`-prefixed — the public/private split in Rule 9 only distinguishes instance methods (sections 3 vs. 4). See Rule 10 for how methods are ordered *within* each of these sections.
+A class body is split into two halves, each opened by a full-width header (120 characters total, `=` like the class hat). Every class has both headers, always, even when a half (or the whole class) has no members. Nothing separates a header from the first member under it; one empty line precedes the INSTANCE header. Inside a class, function/method hats (rule 1) are also 120 characters total, indentation included.
 
 ```python
-class StoreClient:
+    # ==================================================================================================================
+    # CLASS
+    # ==================================================================================================================
+```
+
+```python
+    # ==================================================================================================================
+    # INSTANCE
+    # ==================================================================================================================
+```
+
+Members fall into six sections, always in this order:
+
+CLASS half (everything that belongs to the class itself):
+1. Class-level fields: attributes that describe the class rather than its instances (constants, `__tablename__`, `__table_args__`, `__mapper_args__`)
+2. `@staticmethod`/`@classmethod` methods
+
+INSTANCE half (everything that belongs to an instance):
+3. Instance fields declared in the class body: ORM columns (`orm.Mapped[...]`), and other annotated per-instance attributes. They are written at class level, but each instance has its own value, so they belong here, not in section 1
+4. `__init__` (the constructor)
+5. Public instance methods
+6. Private (`_`-prefixed) instance methods
+
+Every static/class-level method goes in section 2 regardless of whether its name is public or `_`-prefixed — the public/private split only distinguishes instance methods (sections 5 vs. 6). See Rule 10 for how methods are ordered *within* each of these sections. An empty section is simply skipped, but its half's header stays: an empty half is its header followed by one empty line.
+
+```python
+class Instrument(base.Base):
+
+    # ==================================================================================================================
+    # CLASS
+    # ==================================================================================================================
+    __tablename__ = "instruments"
+    __mapper_args__ = {"polymorphic_on": "instrument_type"}
 
     # ------------------------------------------------------------------------------------------------------------------
     @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
+    def find_as_of(session: orm.Session, instrument_id: int, effective_date: date) -> Optional["Instrument"]:
+        ...
+
+    # ==================================================================================================================
+    # INSTANCE
+    # ==================================================================================================================
+    row_id: orm.Mapped[int] = orm.mapped_column(primary_key=True)
+    name: orm.Mapped[str]
+
+    # ------------------------------------------------------------------------------------------------------------------
+    def with_new_name(self, session: orm.Session, effective_from_date: date, name: str) -> "Instrument":
         ...
 
     # ------------------------------------------------------------------------------------------------------------------
-    def __init__(self, base_url: str, token: str | None = None) -> None:
-        ...
-
-    # ------------------------------------------------------------------------------------------------------------------
-    def close(self) -> None:
+    def _copy_with_ranges(self, effective_range: postgresql.Range[date]) -> "Instrument":
         ...
 ```
 
-Data-model classes — pydantic models, `NamedTuple`s, dataclasses, exception classes — whose bodies are just field declarations (and possibly methods on a `NamedTuple`) may omit the blank line; the layout rules matter for behavior classes, where the class body has sections to organize.
+This applies to every class, data-model classes included — pydantic models, `NamedTuple`s, dataclasses, enums, exception classes. Their declared fields are instance fields (section 3); enum members are class-level fields (section 1):
+
+```python
+class LegWeight(NamedTuple):
+
+    # ==================================================================================================================
+    # CLASS
+    # ==================================================================================================================
+
+    # ==================================================================================================================
+    # INSTANCE
+    # ==================================================================================================================
+    instrument: instrument.Instrument
+    weight: Decimal
+```
 
 ## 10. Within a section, order methods by call sequence
 
-Within the public-methods section (Rule 9 §3) and separately within the private-methods section (§4), order methods to match the call sequence rather than alphabetically or by when they were added — the same reasoning as TypeScript Rule 5 (entry point first, supporting functions in call order), applied inside each of Rule 9's sections.
+Within the public-methods section (Rule 9 §5) and separately within the private-methods section (§6), order methods to match the call sequence rather than alphabetically or by when they were added — the same reasoning as TypeScript Rule 5 (entry point first, supporting functions in call order), applied inside each of Rule 9's sections.
 
-Public methods aren't usually called by each other, so their relative order within §3 is whatever reads best for the class (e.g. grouped by lifecycle, or by how central each one is). The private section (§4) is where call-order grouping does the real work: each public method's private helpers appear together, in the order that public method calls them — the first helper it calls, then that helper's own private helpers (recursively), then the next helper it calls, and so on — followed by the next public method's helpers, in the same fashion. Section 1's static/class-level methods are ordered the same way among themselves, relative to whichever method(s) call them.
+Public methods aren't usually called by each other, so their relative order within §5 is whatever reads best for the class (e.g. grouped by lifecycle, or by how central each one is). The private section (§6) is where call-order grouping does the real work: each public method's private helpers appear together, in the order that public method calls them — the first helper it calls, then that helper's own private helpers (recursively), then the next helper it calls, and so on — followed by the next public method's helpers, in the same fashion. Section 2's static/class-level methods are ordered the same way among themselves, relative to whichever method(s) call them.
 
 ```python
 # Not this: private helper before its single caller, and no call-order grouping
 def _upload_file(self, ...): ...
 def upload_files(self, ...): ...   # loops over _upload_file, nothing else
 
-# This: §3 (public) has upload_files; §4 (private) has _upload_file right after it
+# This: §5 (public) has upload_files; §6 (private) has _upload_file right after it
 def upload_files(self, ...): ...
 ...
 def _upload_file(self, ...): ...
 ```
 
-If a class has more than one public entry point, each one's private helpers are still grouped together and kept in call order within §4 — don't interleave one entry point's helpers with another's:
+If a class has more than one public entry point, each one's private helpers are still grouped together and kept in call order within §6 — don't interleave one entry point's helpers with another's:
 
 ```python
 class PriceDatabase(Database):
-    # section 1: static/class-level, in call order relative to ingest_cobra below
+    # section 2: static/class-level, in call order relative to ingest_cobra below
     def _cobra_dbname(cobra_folder): ...
     def _remove_sqlite_family(path): ...
     def _connect_builder(path, cache_mib): ...
@@ -200,16 +246,16 @@ class PriceDatabase(Database):
     def _iter_all_price_rows(cobra_folder): ...
     def _cobra_lastupdate(cobra_folder): ...
 
-    # section 3: public methods
+    # section 5: public methods
     def apply_decoded_update(self, ...): ...
     def ingest_cobra(self, ...): ...
 
-    # section 4: private instance methods, grouped by entry point, in call order
+    # section 6: private instance methods, grouped by entry point, in call order
     def _check_schema_version(self, ...): ...      # apply_decoded_update's helpers
     def _apply_price_rows(self, ...): ...
     def _ensure_price_schema(self, ...): ...
     def _apply_native_schema_aux(self, ...): ...
-    # ingest_cobra's only helpers are static (section 1), so it contributes nothing here
+    # ingest_cobra's only helpers are static (section 2), so it contributes nothing here
 ```
 
 A helper shared by more than one entry point's call tree goes with whichever entry point calls it first in file order; it does not need to be duplicated or cross-referenced.
@@ -784,3 +830,73 @@ if result is None:
         raise RepositoryNotFoundError(f"unknown repository: {name}")
 ```
 
+
+## 37. Variants of a concept put the concept first in their name
+
+When several classes are variants of one concept, the concept comes first in the name, so the most significant part of the name leads and related classes sort together. The same order applies to the module file and to the database table. How the rest of the name is formed depends on what kind of variant it is:
+
+- **A subtype** (the variant *is a kind of* the concept): concept + variant. An equity is an instrument, so `InstrumentEquity`.
+- **The concept attached to another concept** (the variant is the concept *for* some target, not a kind of it): concept + `For` + target. A vendor's symbol for an exchange is not a kind of symbol, and `SymbolExchange` would read as "an exchange of symbols" (in an English compound the last word is the thing), so `SymbolForExchange`.
+
+```python
+# Not this: the variant leads, so the instruments and symbols are scattered alphabetically
+class EquityInstrument(Instrument): ...           # equity_instrument.py
+class FuturesContract(Instrument): ...            # futures_contract.py, table futures_contracts
+class ExchangeSymbol(Base): ...                   # exchange_symbol.py, table exchange_symbols
+
+# Not this either: concept first, but a target-of relation written as if it were a subtype
+class SymbolExchange(Base): ...                   # reads as "an exchange of symbols"
+
+# This: subtypes are concept + variant; things attached to a target are concept + For + target
+class InstrumentEquity(Instrument): ...           # instrument_equity.py
+class InstrumentFuturesContract(Instrument): ...  # instrument_futures_contract.py, table instrument_futures_contracts
+class SymbolForExchange(Base): ...                # symbol_for_exchange.py, table symbols_for_exchanges
+```
+
+Modules that hold one concept's operations for different targets follow the same `For` form: `symbology_for_exchange.py`, `symbology_for_futures_root.py`, `symbology_for_instrument.py` (called as `symbology_for_instrument.resolve_target(...)`). A satellite of a variant extends the variant's name (`InstrumentSyntheticLeg`). Base concepts that aren't variants of anything keep their plain names (`Instrument`, `Exchange`, `Symbology`).
+
+## 38. Names carry their type or unit
+
+Rule 33 applies beyond primitives: every variable, constant, and parameter name says what kind of thing it holds, not just which one. This is what lets a reader tell a `date` from a `datetime`, or a symbology from a symbol, without looking up the definition.
+
+```python
+# Not this:
+LISTED = date(2012, 5, 18)
+LATER = datetime(2026, 1, 1, tzinfo=timezone.utc)
+ticker = Symbology.create(session, "TICKER")
+facebook = InstrumentEquity.create(...)
+
+# This:
+LISTED_DATE: date = date(2012, 5, 18)
+LATER_DATETIME: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
+ticker_symbology: Symbology = Symbology.create(session, "TICKER")
+facebook_equity: InstrumentEquity = InstrumentEquity.create(...)
+```
+
+A name is also never ambiguous with another concept in the codebase. `schema_code` is wrong for a symbology's code because the project also has database schemas: it is `symbology_code`. The same reasoning is why a vendor's name for something is a `symbol` and not a `name` (which instruments and exchanges already have).
+
+## 39. Function and method names start with a verb
+
+A function or method name says what it does: `_create_equity()`, `find_as_of()`, `get_symbol()`, `resolve_target()`, `with_new_tick_size()` (a `with_new_<field>` mutator reads as "give me this with a new tick size"). A noun-only name (`_equity()`, `symbol()`) leaves the reader guessing whether it creates, finds, or computes.
+
+## 40. A name says what the value is, not how it was obtained
+
+Name a variable for the thing it refers to. Qualifiers describing where it came from or what it will be used for mislead when the thing itself is something else.
+
+```python
+# Not this: the value is a symbology, which is not "for a symbol" at all
+exchange_symbology_for_symbol = Symbology.create(session, "IBKR")
+
+# This:
+ibkr_symbology: Symbology = Symbology.create(session, "IBKR")
+```
+
+When a parameter's natural name is also the name of an imported first-party module (`symbology`, `exchange`, `instrument`), the parameter keeps its natural name and the module import takes a `_module` suffix: `import bullpen_sec_master.mockup.symbology as symbology_module`.
+
+## 41. Tests read like a user guide
+
+A test file teaches one part of the system in order, the way a user guide would: earlier tests introduce the basic operations, later tests build on them, and each test's name states the behaviour it shows (`test_03_a_mandate_rolls_on_its_own_schedule`). Number the files and tests in reading order, zero-padded so they also sort in that order (`test_guide_01_...`, `test_01_...`).
+
+The test tree mirrors the source tree: tests for `src/bullpen_sec_master/` live in the test package `tests/bullpen_sec_master/` (with its own `conftest.py`). Keep `tests/__init__.py` so the test package is imported as `tests.bullpen_sec_master` and never shadows the real `bullpen_sec_master`.
+
+Keep the calls under test visible in the test body. A test helper earns its place only if it adds something a reader would otherwise have to reconstruct (several calls combined into one named question, e.g. `_get_contract_id()` resolving a name and then reading the synthetic's leg). A helper that only forwards to one call with fewer arguments hides the API the guide is supposed to teach: inline it (rule 17 applied to tests).
